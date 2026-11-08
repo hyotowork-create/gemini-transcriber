@@ -1,0 +1,17 @@
+{
+  "name": "gemini-piano-transcriber",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "유튜브 URL이나 음악 파일을 Gemini API로 피아노 채보해 MIDI·MusicXML·PDF 악보로 내려받는 웹앱",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "express": "^5.1.0",
+    "multer": "^2.0.0"
+  }
+}

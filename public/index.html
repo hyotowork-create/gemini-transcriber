@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gemini 채보</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236b8cff'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle' fill='white'%3E%E2%99%AA%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>Gemini 채보</h1>
+  <p class="sub">유튜브 URL이나 음악 파일을 넣고 <b>채보 시작</b>을 누르면 Gemini가 피아노·베이스·기타·드럼 악보와 코드·가사를 뽑습니다. 악보는 MIDI·MusicXML·PDF로 받고, 휴대폰에서는 카톡·메일로 바로 보냅니다.</p>
+  <p id="health" class="health"></p>
+  <p id="httpsBanner" class="banner hidden"></p>
+</header>
+
+<main>
+<section class="card" id="inputCard">
+  <div class="row">
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="audio/*,video/*,.mp3,.wav,.m4a,.flac,.ogg,.mp4">
+      <span id="dropText">음악 파일을 끌어다 놓거나 클릭해서 선택</span>
+    </label>
+  </div>
+  <div class="row or"><span>또는</span></div>
+  <div class="row"><input type="url" id="url" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off"></div>
+  <div class="row parts">
+    <span class="lbl">악기</span>
+    <label class="chk"><input type="checkbox" class="part" value="piano" checked> 피아노 (멜로디+반주)</label>
+    <label class="chk"><input type="checkbox" class="part" value="bass"> 베이스 기타</label>
+    <label class="chk"><input type="checkbox" class="part" value="guitar"> 어쿠스틱 기타</label>
+    <label class="chk"><input type="checkbox" class="part" value="drums"> 드럼</label>
+    <label class="chk" id="stemsLabel" title="Demucs로 악기별 소리를 먼저 분리합니다. 정확도가 오르지만 곡당 몇 분 더 걸립니다"><input type="checkbox" id="stems"> 스템 분리 <span class="muted">(정확도↑, 느림)</span></label>
+  </div>
+  <details class="opts">
+    <summary>옵션</summary>
+    <div class="grid">
+      <label>모델 <select id="model"><option value="">서버 기본값</option><option value="gemini-3.5-flash">gemini-3.5-flash (기본)</option><option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (가장 빠름)</option><option value="gemini-3.8-flash">gemini-3.8-flash</option><option value="gemini-2.5-pro">gemini-2.5-pro (느림)</option></select></label>
+      <label>BPM 고정 <input type="number" id="bpm" min="40" max="240" placeholder="자동"></label>
+      <label>조각 길이(초) <input type="number" id="chunkSec" min="10" max="60" value="30"></label>
+      <label>양손 나누는 음 <input type="number" id="splitPitch" min="36" max="84" value="60" title="이 MIDI 번호 이상은 오른손 보표"></label>
+      <label class="wide">힌트 <input type="text" id="hint" placeholder="예: 솔로 피아노, 느린 발라드, 보컬 있음"></label>
+    </div>
+  </details>
+  <div class="row actions">
+    <button id="start" class="primary">채보 시작</button>
+    <label class="chk"><input type="checkbox" id="fast"> 빠른 모드 <span class="muted">(flash-lite 모델 · 정확도는 조금 낮음)</span></label>
+    <span id="inputMsg" class="msg"></span>
+  </div>
+</section>
+
+<section class="card hidden" id="progressCard">
+  <div class="progress"><div id="bar"></div></div>
+  <div class="row between"><span id="status">대기 중</span><span><span id="elapsed"></span> <button id="cancel" class="danger">중지</button></span></div>
+  <pre id="logs" class="logs"></pre>
+</section>
+
+<section class="card hidden" id="resultCard">
+  <div class="row between head">
+    <div>
+      <h2 id="rTitle"></h2>
+      <div id="rMeta" class="meta"></div>
+    </div>
+    <div class="dl">
+      <a id="dlMidi" class="btn" download>MIDI 받기</a>
+      <a id="dlXml" class="btn" download>악보 받기 (MusicXML)</a>
+      <button id="dlPdf" class="btn">악보 PDF 받기</button>
+      <button id="share" class="btn accent">공유 (카톡·메일)</button>
+    </div>
+  </div>
+
+  <div id="desc" class="desc hidden">
+    <div class="desc-grid">
+      <div><b>이 곡은</b><p id="descSummary"></p></div>
+      <div><b>구조</b><p id="descStructure"></p></div>
+      <div><b>난이도</b><p id="descDifficulty"></p></div>
+      <div><b>따라 치는 요령</b><p id="descTips"></p></div>
+    </div>
+  </div>
+
+  <div id="sharePanel" class="share hidden">
+    <b id="shareWhy">이 기기에서는 바로 공유 창을 띄울 수 없습니다.</b>
+    <div class="row">
+      <a id="mailLink" class="btn" href="#">메일 앱 열기 (악보 파일은 받은 뒤 첨부)</a>
+      <button id="copyLink" class="btn">결과 링크 복사</button>
+      <button id="dlAll" class="btn">PDF·리드시트·MIDI·MusicXML 한 번에 받기</button>
+    </div>
+    <p class="msg" id="lanHint">휴대폰에서 같은 와이파이로 이 주소를 열면 공유 버튼이 카카오톡·메일 공유 창을 바로 띄웁니다.</p>
+  </div>
+
+  <div class="player">
+    <button id="play" class="round" title="재생/정지">▶</button>
+    <span id="tCur" class="time">0:00</span>
+    <input type="range" id="seek" min="0" max="1000" value="0">
+    <span id="tEnd" class="time">0:00</span>
+    <select id="speed" title="재생 속도"><option value="0.5">0.5x</option><option value="0.75">0.75x</option><option value="1" selected>1x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option></select>
+  </div>
+  <div class="mix">
+    <label>원곡 <input type="range" id="volOrig" min="0" max="100" value="70"></label>
+    <label>채보 <input type="range" id="volSynth" min="0" max="100" value="80"></label>
+    <span id="partToggles" class="toggles"></span>
+    <label class="chk"><input type="checkbox" id="follow" checked> 재생 위치 따라가기</label>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="roll">피아노 롤</button>
+    <button class="tab" data-tab="sheet">악보</button>
+    <button class="tab" data-tab="lead">코드·가사</button>
+    <button class="tab hidden" data-tab="drums" id="drumsTab">드럼 그리드</button>
+    <span class="tabtools">
+      <label class="chk" id="easyWrap"><input type="checkbox" id="easy"> 쉬운 악보</label>
+      <label class="chk"><input type="checkbox" id="solfege"> 계이름</label>
+      <label class="zoom" id="zoomWrap">확대 <input type="range" id="zoom" min="20" max="240" value="80"></label>
+    </span>
+  </div>
+  <div id="rollPane" class="pane"><canvas id="roll"></canvas></div>
+  <div id="sheetPane" class="pane hidden"><div id="sheet"></div><p id="sheetMsg" class="msg"></p></div>
+  <div id="leadPane" class="pane hidden"><div class="leadtools"><button id="dlLead" class="btn">리드시트 PDF 받기</button><span class="msg">마디 위에 코드, 아래에 가사. 기타·피아노 반주용입니다.</span></div><div id="lead"></div></div>
+  <div id="drumsPane" class="pane hidden"><canvas id="drumGrid"></canvas></div>
+  <audio id="audio" preload="auto"></audio>
+</section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@2.2.1/build/opensheetmusicdisplay.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.4/dist/svg2pdf.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
