@@ -12,11 +12,13 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { createJob, getJob, publicView, persistJob, restoreJobs } from './jobs.js';
 import { downloadFromUrl, probeDuration, makePlayback, splitChunks, hasBinary } from './audio.js';
-import { transcribeChunk, describeSong, PART_IDS } from './gemini.js';
+import { transcribeChunk, describeSong, validateKey, PART_IDS } from './gemini.js';
+import { maskKey, isPrivateAddress, saveKey } from './settings.js';
 import { mergeAndQuantize, buildEasyNotes } from './quantize.js';
 import { buildMidi } from './midi.js';
 import { buildMusicXML } from './musicxml.js';
 import { separateStems, demucsAvailable } from './stems.js';
+import { audioChroma, correctKeys } from './keyfix.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 try { process.loadEnvFile(path.join(ROOT, '.env')); } catch { /* .env 없음 */ }
@@ -38,7 +40,8 @@ console.log(`이전 작업 ${await restoreJobs(path.join(DATA, 'jobs'))}개 복�
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
-app.use(express.static(path.join(ROOT, 'public')));
+// 화면 파일은 매번 새것인지 확인하게 한다(앱을 고친 뒤 휴대폰 사파리가 옛 화면을 붙잡지 않게)
+app.use(express.static(path.join(ROOT, 'public'), { setHeaders: res => res.setHeader('Cache-Control', 'no-cache') }));
 const upload = multer({ dest: path.join(DATA, 'uploads'), limits: { fileSize: 200 * 1024 * 1024 } });
 
 function lanIps() {
@@ -57,27 +60,47 @@ async function ensureCert() {
   const dir = path.join(DATA, 'certs');
   await fs.mkdir(dir, { recursive: true });
   const ips = lanIps();
-  const tag = ips.join('_') || 'local';
+  const tag = (ips.join('_') || 'local') + '_v2'; // v2: 아이폰 규칙(서버 인증 용도·398일 이하·CA 아님)에 맞춘 인증서
   const key = path.join(dir, `${tag}.key`), crt = path.join(dir, `${tag}.crt`);
   try { await fs.access(key); await fs.access(crt); return { key, crt }; } catch { /* 새로 만든다 */ }
   const san = ['DNS:localhost', 'IP:127.0.0.1', ...ips.map(ip => `IP:${ip}`)].join(',');
-  await promisify(execFile)('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '825', '-keyout', key, '-out', crt,
-    '-subj', '/CN=Gemini Transcriber', '-addext', `subjectAltName=${san}`]);
+  // 아이폰(iOS)은 서버 인증서에 extendedKeyUsage=serverAuth가 없거나 유효기간이 길면 "방문"을 눌러도 연결을 끊는다
+  await promisify(execFile)('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-sha256', '-nodes', '-days', '397', '-keyout', key, '-out', crt,
+    '-subj', `/CN=${ips[0] || 'localhost'}`,
+    '-addext', `subjectAltName=${san}`,
+    '-addext', 'basicConstraints=critical,CA:FALSE',
+    '-addext', 'keyUsage=critical,digitalSignature,keyEncipherment',
+    '-addext', 'extendedKeyUsage=serverAuth']);
   return { key, crt };
 }
 
 app.get('/api/health', async (req, res) => {
   res.json({
-    lan: lanUrls(), lanHttps: lanHttpsUrls(), phone: lanPhoneUrls(), ok: true, hasKey: Boolean(process.env.GEMINI_API_KEY), mock: MOCK, model: DEFAULT_MODEL,
+    lan: lanUrls(), lanHttps: lanHttpsUrls(), phone: lanPhoneUrls(), ok: true, hasKey: Boolean(process.env.GEMINI_API_KEY), keyHint: maskKey(process.env.GEMINI_API_KEY), mock: MOCK, model: DEFAULT_MODEL,
     ytdlp: await hasBinary('yt-dlp'), ffmpeg: await hasBinary('ffmpeg'), demucs: await demucsAvailable(ROOT),
   });
+});
+
+// 화면에서 API 키 바꾸기: 같은 네트워크에서 온 요청만, 저장 전에 키를 검사, 응답에는 끝 4자리만
+app.post('/api/settings/key', async (req, res) => {
+  const ip = req.socket.remoteAddress;
+  if (!isPrivateAddress(ip)) return res.status(403).json({ error: '같은 와이파이·핫스팟에서만 키를 바꿀 수 있습니다.' });
+  const key = String(req.body?.key || '');
+  try {
+    const r = await saveKey(ROOT, key, k => validateKey(k));
+    if (!r.ok) return res.status(400).json({ error: r.error });
+    console.log(`API 키를 화면에서 바꿨습니다 (${r.hint}, 요청: ${ip})`);
+    res.json({ ok: true, keyHint: r.hint, warning: r.warning });
+  } catch (e) {
+    res.status(500).json({ error: '저장하지 못했습니다: ' + String(e.message).slice(0, 80) });
+  }
 });
 
 app.post('/api/transcribe', upload.single('file'), async (req, res) => {
   req.body = req.body || {};
   const url = (req.body.url || '').trim();
   if (!req.file && !url) return res.status(400).json({ error: '음악 파일이나 유튜브 URL 중 하나는 필요합니다' });
-  if (!MOCK && !process.env.GEMINI_API_KEY) return res.status(400).json({ error: 'GEMINI_API_KEY가 없습니다. .env 파일에 키를 넣고 서버를 다시 시작하세요.' });
+  if (!MOCK && !process.env.GEMINI_API_KEY) return res.status(400).json({ error: 'Gemini API 키가 없습니다. 화면 위쪽 「설정 · Gemini API 키」에서 키를 넣어 주세요.' });
 
   let parts = String(req.body.parts || 'piano').split(',').map(s => s.trim()).filter(p => PART_IDS.includes(p));
   if (!parts.length) parts = ['piano'];
@@ -219,7 +242,7 @@ async function runPipeline(job, { file, url, model, bpmOverride, chunkSec, split
       const i = next++;
       const { src, chunk } = jobs[i];
       const r = await transcribeChunk(chunk, { apiKey: process.env.GEMINI_API_KEY, model, hint, mock: MOCK, signal: job.abort.signal, parts: src.parts, stemLabel: src.stemLabel, log: m => log(job, m) });
-      results[i] = { ...r, offsetSec: chunk.offsetSec, srcLabel: src.label };
+      results[i] = { ...r, offsetSec: chunk.offsetSec, durationSec: chunk.durationSec, srcLabel: src.label };
       done++;
       const counts = ['notes', 'bass', 'guitar', 'drums'].map(k => r[k]?.length ? `${k === 'notes' ? '피아노' : PART_LABELS[k]} ${r[k].length}` : null).filter(Boolean).join(', ');
       log(job, `${src.label} ${chunk.index + 1}: ${counts || '음 없음'}, 코드 ${r.chords.length}, ${r.bpm ?? '?'} BPM, ${r.key ?? '?'}`);
@@ -229,6 +252,18 @@ async function runPipeline(job, { file, url, model, bpmOverride, chunkSec, split
   await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, worker));
 
   checkCancel();
+  // 조 보정: 음원에서 잰 음별 에너지와 비교해, Gemini가 통째로 옮겨 적은 조각을 되돌린다
+  let keyFix = null;
+  if (!MOCK) {
+    setStatus(job, 'keyfix', 0.89, '음원에서 조를 재서 맞추는 중');
+    try {
+      keyFix = correctKeys(results, await audioChroma(playback));
+      const moved = keyFix.perChunk.map((p, i) => p.shift ? `${results[i].srcLabel} ${i + 1}: ${p.shift > 0 ? '+' : ''}${p.shift}` : null).filter(Boolean);
+      log(job, `조 보정: 음원 기준 ${keyFix.target ?? '판단 불가'}${moved.length ? ` · 옮긴 조각 ${moved.join(', ')}` : ' · 옮길 필요 없음'}`);
+    } catch (e) {
+      log(job, `조 보정 건너뜀: ${String(e.message).slice(0, 80)}`);
+    }
+  }
   setStatus(job, 'building', 0.9, '악보와 MIDI를 만드는 중');
   // 스템 분리 때는 코드·가사·BPM은 피아노/믹스 쪽만 믿는다
   const metaResults = stems ? results.filter(r => /믹스|코드/.test(r.srcLabel)) : results;
@@ -239,6 +274,7 @@ async function runPipeline(job, { file, url, model, bpmOverride, chunkSec, split
   const easy = buildEasyNotes({ ...merged }, splitPitch);
   job.result = {
     title, duration, model, mock: MOCK, stems,
+    keyFix: keyFix ? { applied: keyFix.applied, target: keyFix.target, shifts: keyFix.perChunk.map(p => p.shift) } : null,
     bpm: merged.bpm, key: merged.key, timeSignature: merged.timeSignature, splitPitch,
     partIds, parts: merged.parts, chords: merged.chords, lyrics: merged.lyrics, easy,
     noteCount: partIds.reduce((n, id) => n + merged.parts[id].length, 0),
@@ -286,6 +322,7 @@ try {
   await new Promise(resolve => { redirectServer.once('error', e => { console.log(`${REDIRECT_PORT}번 안내 서버는 못 열었습니다(${e.code})`); resolve(); }); redirectServer.listen(REDIRECT_PORT, () => { redirectReady = true; resolve(); }); });
   for (const u of lanPhoneUrls()) console.log(`휴대폰(같은 와이파이)에서 공유까지 쓰려면: ${u}  ← 처음 한 번 "안전하지 않음" 경고에서 세부사항 보기 → 방문/계속`);
 } catch (e) {
-  console.log(`https를 켜지 못했습니다(openssl 필요): ${e.message}. 휴대폰 공유 창은 http에서는 열리지 않습니다.`);
+  console.log(`https를 켜지 못했습니다: ${String(e.message).split('\n')[0]}`);
+  console.log('  → 컴퓨터에서 쓰는 데는 문제없습니다. 휴대폰에서 카톡·메일 공유 창을 쓰려면 https가 필요합니다(맥·리눅스는 openssl 기본 포함, 윈도우는 Git for Windows나 winget install ShiningLight.OpenSSL.Light 설치).');
   for (const u of lanUrls()) console.log(`휴대폰(같은 와이파이)에서: ${u}`);
 }

@@ -10,32 +10,92 @@
 >
 > **주의**: 개인 연습용입니다. 저작권이 있는 곡의 악보·가사를 만들어 나누거나 올리거나 파는 것은 저작권 침해가 될 수 있습니다. 유튜브 영상 받기(yt-dlp)는 유튜브 이용약관과 영상 권리자의 허락 범위 안에서만 쓰세요. AI 채보라 틀린 음이 있습니다.
 
-## 준비물
+## 어떤 기기에 설치하나
+
+이 앱은 **컴퓨터 한 대에 설치해 서버로 켜 두고**, 그 컴퓨터나 같은 와이파이의 휴대폰 브라우저로 씁니다.
+휴대폰에는 설치하지 않습니다.
+
+| 기기 | 설치 | 확인 상태 (2026-11-12) |
+|---|---|---|
+| 맥 (애플 실리콘·인텔) | 설치해서 서버로 씀 | 새 폴더에 압축 풀어 설치·실행·채보까지 확인 |
+| 윈도우 10·11 | 설치해서 서버로 씀 | 윈도우용 코드 수정은 넣었지만 실제 윈도우에서는 아직 안 돌려 봄 |
+| 리눅스 | 설치해서 서버로 씀 | 맥과 같은 방식. 80·443 포트는 관리자 권한이 필요해 다른 포트를 씀 |
+| 아이폰·아이패드 | 설치 안 함. 사파리로 접속 | iOS 시뮬레이터(iPhone 17)에서 화면·파일 선택·진행·악보·공유 창 확인 |
+| 안드로이드 폰 | 설치 안 함. 크롬으로 접속 | 같은 방식으로 될 것으로 보나 실기 미확인 |
+| 컴퓨터 없이 휴대폰만 | 동역 웹판을 씀(위 링크) | 본인 Gemini 키 필요, 스템 분리 없음 |
+
+### 맥에 설치
+
+```bash
+brew install node ffmpeg yt-dlp          # Homebrew가 없으면 https://brew.sh 먼저
+cd gemini-piano-transcriber
+npm install                              # "install-scripts" 경고는 무시해도 됩니다
+cp .env.example .env
+npm start                                # 키는 화면 맨 위 「설정 · Gemini API 키」에서 넣어도 됨
+```
+
+### 윈도우에 설치 (PowerShell)
+
+```powershell
+winget install OpenJS.NodeJS.LTS Gyan.FFmpeg yt-dlp.yt-dlp
+# 휴대폰 공유 창까지 쓰려면 https용 openssl도: winget install ShiningLight.OpenSSL.Light
+cd gemini-piano-transcriber
+npm install
+copy .env.example .env
+npm start                                # 키는 화면 맨 위 「설정 · Gemini API 키」에서 넣기
+```
+
+### 리눅스에 설치
+
+```bash
+sudo apt install nodejs npm ffmpeg && pipx install yt-dlp   # Node는 20.12 이상이어야 함
+cd gemini-piano-transcriber && npm install && cp .env.example .env
+HTTPS_PORT=3443 HTTP_REDIRECT_PORT=3080 npm start
+```
+
+### 준비물 정리
 
 | 항목 | 확인·설치 |
 |---|---|
-| Node.js 20 이상 | `node -v` |
-| ffmpeg, ffprobe | `brew install ffmpeg` |
-| yt-dlp (유튜브 URL을 쓸 때만) | `brew install yt-dlp` |
-| Gemini API 키 | https://aistudio.google.com/apikey |
-| (선택) Python 3.10 이상 — 스템 분리용 | `python3 --version` |
+| Node.js 20.12 이상 | `node -v` |
+| ffmpeg, ffprobe | 위 설치 명령에 포함 |
+| yt-dlp (유튜브 URL을 쓸 때만) | 위 설치 명령에 포함 |
+| Gemini API 키 | https://aistudio.google.com/apikey (선불 크레딧이 바닥나면 앱이 한국어로 알려 줌) |
+| openssl (휴대폰 공유용 https) | 맥·리눅스는 기본 포함 |
+| (선택) Python 3.10 이상 — 스템 분리용 | 아래 "3단계" |
 
-## 실행
+## API 키 넣기·바꾸기
 
-```bash
-cd gemini-piano-transcriber
-npm install
-cp .env.example .env     # 이미 .env가 있으면 생략
-```
+두 가지 방법 중 편한 쪽을 씁니다. 둘 다 같은 `.env` 파일에 저장됩니다.
 
-`.env`의 `GEMINI_API_KEY=` 뒤에 키를 붙여 넣고:
+- **화면에서(휴대폰 포함)**: 맨 위 **⚙ 설정 · Gemini API 키**를 눌러 열고, 새 키를 붙여 넣은 뒤 **저장**.
+  - 저장 전에 Gemini에 아주 짧게 물어봐서 진짜 키인지 확인합니다. 틀린 키는 저장하지 않습니다.
+  - 크레딧이 바닥난 키는 저장은 하되 노란 글씨로 알려 줍니다.
+  - 서버를 다시 켤 필요 없이 바로 적용됩니다.
+  - 저장된 키는 화면에 끝 4자리만 보입니다(예: "저장됨 …djjw").
+  - 같은 와이파이·핫스팟·테일스케일·이 컴퓨터에서 연 화면에서만 바꿀 수 있습니다.
+- **파일로**: 컴퓨터에서 `.env`를 열어 `GEMINI_API_KEY=` 뒤에 키를 넣고 서버를 다시 켭니다.
 
-```bash
-npm start
-```
+키는 https://aistudio.google.com/apikey 에서 만듭니다.
 
-http://localhost:3000 을 엽니다. 서버가 켜질 때 찍어 주는 `http://192.168.x.x:3000` 주소를
-휴대폰(같은 와이파이)에서 열면 공유 버튼이 카카오톡·메일 공유 창을 띄웁니다.
+## 실행과 접속
+
+`npm start`를 하면 터미널에 주소가 찍힙니다.
+
+- **설치한 컴퓨터에서**: http://localhost:3000
+- **아이폰·안드로이드에서** (컴퓨터와 같은 와이파이):
+  1. 터미널에 찍힌 `http://192.168.x.x` 주소를 사파리(크롬)에 입력한다. 자동으로 https로 넘어간다.
+  2. 처음 한 번 "연결된 네트워크가 비공개가 아님" 경고가 뜬다. 아이폰은 **세부사항 보기 → 이 웹사이트에 방문
+     → 웹사이트 방문**을 누른다. 안드로이드는 **고급 → 이동**. 컴퓨터가 스스로 만든 인증서라 뜨는 경고다.
+     - 방문을 눌러도 안 열리면: 그 탭을 닫고 새 탭에서 주소를 다시 입력한다. 예전 인증서가 남아 있을 수 있다.
+     - 2026-11-12 이전에 만든 인증서는 아이폰 규칙(서버 인증 용도·유효기간 398일 이하)에 맞지 않아 실제 아이폰에서
+       방문이 막힐 수 있었다. 지금은 서버가 켜질 때 규칙에 맞는 인증서(`data/certs/*_v2.*`)를 새로 만든다.
+  3. 결과 화면의 **공유 (카톡·메일)** 를 누르면 시스템 공유 창에 악보 PDF·리드시트 PDF·MIDI·MusicXML
+     네 파일이 담긴다. 여기서 카카오톡이나 메일을 고른다.
+- 공유 창은 https 주소에서만 열린다. `http://…:3000`으로 열면 앱이 맨 위에 https로 가는 안내를 띄운다.
+- 사무실·카페 같은 공용 와이파이는 기기끼리 연결을 막는 경우가 많다. 그때는 집 와이파이나
+  휴대폰 핫스팟에 컴퓨터를 붙인다.
+- 컴퓨터가 잠자기에 들어가면 휴대폰에서도 끊긴다.
 
 ## 사용법
 
@@ -76,6 +136,7 @@ Apple M4 CPU 기준 1분 곡을 40초 정도에 6개 스템(보컬·드럼·베�
 ```
 파일/URL → (yt-dlp) → ffmpeg 재생용 mp3 → (Demucs 스템) → 30초 조각(모노 22kHz)
   → 조각마다 Gemini: {bpm, key, timeSignature, chords, lyrics, notes, bass, guitar, drums}
+  → 조 보정(음원에서 음별 에너지를 재서, Gemini가 통째로 옮겨 적은 조각을 원래 조로 되돌림)
   → 합치기(BPM 중앙값) · 16분음표 격자 양자화 · 쉬운 버전 생성
   → MIDI(파트별 트랙, 드럼 10번 채널) · MusicXML(여러 파트, TAB, 타악기, <harmony>, 계이름 <lyric>)
   → Gemini 한 번 더: 곡 해설(메타데이터만 보냄)
@@ -105,6 +166,7 @@ server/index.js     Express 서버, 업로드·작업 큐·다운로드(easy/sol
 server/audio.js     yt-dlp, ffmpeg 변환·분할
 server/stems.js     Demucs 스템 분리
 server/gemini.js    Gemini 호출(파트별 스키마·프롬프트)·파싱·재시도·곡 해설·모의 모드
+server/keyfix.js    조 보정(음원 크로마 기준)
 server/quantize.js  합치기·양자화·쉬운 버전
 server/musicxml.js  MusicXML (여러 파트, TAB, 드럼, 코드 기호, 계이름)
 server/midi.js      MIDI (파트별 트랙)

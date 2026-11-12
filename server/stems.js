@@ -8,7 +8,9 @@ import path from 'node:path';
 const run = promisify(execFile);
 const MODEL = 'htdemucs_6s'; // vocals, drums, bass, guitar, piano, other
 
-export function demucsBin(root) { return path.join(root, '.venv', 'bin', 'demucs'); }
+export function demucsBin(root) {
+  return process.platform === 'win32' ? path.join(root, '.venv', 'Scripts', 'demucs.exe') : path.join(root, '.venv', 'bin', 'demucs');
+}
 export async function demucsAvailable(root) {
   try { await fs.access(demucsBin(root)); return true; } catch { return false; }
 }

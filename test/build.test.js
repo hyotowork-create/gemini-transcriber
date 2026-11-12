@@ -3,7 +3,15 @@ import assert from 'node:assert/strict';
 import { mergeAndQuantize, buildEasyNotes, chordRootPitch } from '../server/quantize.js';
 import { buildMusicXML, keyToFifths, parseChordSymbol, assignFrets, GUITAR_TUNING } from '../server/musicxml.js';
 import { buildMidi } from '../server/midi.js';
-import { parseChords, parseLyrics, parseDrums } from '../server/gemini.js';
+import { parseChords, parseLyrics, parseDrums, fatalGeminiError } from '../server/gemini.js';
+
+test('재시도하면 안 되는 Gemini 오류', () => {
+  const depleted = '{"error":{"code":402,"message":"Your prepayment credits are depleted. Please go to AI Studio","status":"RESOURCE_EXHAUSTED"}}';
+  assert.match(fatalGeminiError(depleted), /크레딧이 바닥/);
+  assert.match(fatalGeminiError('API key not valid. Please pass a valid API key.'), /키가 올바르지/);
+  assert.equal(fatalGeminiError('{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED"}}'), null);
+  assert.equal(fatalGeminiError('503 UNAVAILABLE overloaded'), null);
+});
 
 const chunk = {
   offsetSec: 0, bpm: 120, key: 'G major', timeSignature: '4/4',
@@ -81,4 +89,75 @@ test('MIDI 여러 파트', () => {
   const buf = buildMidi({ bpm: m.bpm, timeSignature: m.timeSignature, parts, title: 'x' });
   assert.equal(buf.subarray(0, 4).toString(), 'MThd');
   assert.equal(buf.readUInt16BE(10), 5); // 템포 + 양손 2 + 베이스 + 드럼
+});
+
+import { transposeChord, transposeKey, correctKeys } from '../server/keyfix.js';
+
+test('조 보정: 코드·조 옮기기', () => {
+  assert.equal(transposeChord('E', 1, true), 'F');
+  assert.equal(transposeChord('B/D#', 1, true), 'C/E');
+  assert.equal(transposeChord('C#m7', 1, true), 'Dm7');
+  assert.equal(transposeChord('Gmaj7', -2, true), 'Fmaj7');
+  assert.equal(transposeChord('A2', 1, true), 'Bb2');
+  assert.equal(transposeKey('E major', 1), 'F major');
+  assert.equal(transposeKey('A minor', 2), 'B minor');
+  assert.equal(transposeKey('D major', 0), 'D major');
+});
+
+test('조 보정: Gemini가 반음 낮게 적은 조각을 음원 기준으로 되돌린다', () => {
+  // 음원: F장조 음계 에너지 (F G A Bb C D E), 30초짜리 조각 2개
+  const fMajor = new Float64Array(12); for (const [pc, w] of [[5, 6], [7, 3], [9, 4], [10, 3], [0, 5], [2, 3], [4, 3]]) fMajor[pc] = w;
+  const chroma = { hopSec: 30, winSec: 0, frames: [fMajor, fMajor] };
+  const eNotes = [64, 66, 68, 69, 71, 73, 75, 64, 71, 68].map((p, i) => ({ p, s: i, d: p % 12 === 4 ? 2 : 0.5 }));   // E장조
+  const fNotes = [65, 67, 69, 70, 72, 74, 76, 65, 72, 69].map((p, i) => ({ p, s: i, d: p % 12 === 5 ? 2 : 0.5 }));   // F장조(맞음)
+  const results = [
+    { offsetSec: 0, durationSec: 30, key: 'E major', notes: eNotes, chords: [{ s: 0, name: 'E' }, { s: 2, name: 'B/D#' }] },
+    { offsetSec: 30, durationSec: 30, key: 'F major', notes: fNotes, chords: [{ s: 0, name: 'F' }] },
+  ];
+  const fix = correctKeys(results, chroma);
+  assert.equal(fix.target, 'F major');
+  assert.deepEqual(fix.perChunk.map(p => p.shift), [1, 0]);
+  assert.equal(results[0].key, 'F major');
+  assert.deepEqual(results[0].chords.map(c => c.name), ['F', 'C/E']);
+  assert.equal(results[0].notes[0].p, 65);
+  assert.equal(results[1].notes[0].p, 65); // 맞는 조각은 그대로
+});
+
+import os from 'node:os';
+import fsp from 'node:fs/promises';
+import pathMod from 'node:path';
+import { maskKey, isPrivateAddress, updateEnvText, saveKey, looksLikeKey } from '../server/settings.js';
+
+test('설정: 키 가리기·주소 판정·.env 줄 바꾸기', () => {
+  assert.equal(maskKey('AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ012345'), '…2345');
+  assert.equal(maskKey(''), null);
+  assert.ok(looksLikeKey('AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ012345'));
+  assert.ok(!looksLikeKey('abc'));
+  assert.ok(!looksLikeKey('AIza key with spaces 1234567890'));
+  for (const ip of ['127.0.0.1', '::1', '::ffff:172.20.10.1', '192.168.0.5', '10.1.2.3', '100.100.100.100', '172.16.0.1']) assert.ok(isPrivateAddress(ip), ip);
+  for (const ip of ['8.8.8.8', '::ffff:1.2.3.4', '172.32.0.1', '100.128.0.1', '', null]) assert.ok(!isPrivateAddress(ip), String(ip));
+  assert.equal(updateEnvText('# 주석\nGEMINI_API_KEY=old\nGEMINI_MODEL=gemini-3.5-flash\n', 'NEW'), '# 주석\nGEMINI_API_KEY=NEW\nGEMINI_MODEL=gemini-3.5-flash\n');
+  assert.equal(updateEnvText('GEMINI_MODEL=x\n', 'NEW'), 'GEMINI_MODEL=x\nGEMINI_API_KEY=NEW\n');
+  assert.equal(updateEnvText('', 'NEW'), 'GEMINI_API_KEY=NEW\n');
+});
+
+test('설정: 키 저장은 검사를 통과해야 하고 다른 설정은 그대로 둔다', async () => {
+  const dir = await fsp.mkdtemp(pathMod.join(os.tmpdir(), 'keytest-'));
+  const before = process.env.GEMINI_API_KEY;
+  try {
+    await fsp.writeFile(pathMod.join(dir, '.env'), 'GEMINI_API_KEY=OLDKEY_1234567890123456\nGEMINI_MODEL=gemini-3.5-flash\nMOCK_GEMINI=0\n');
+    const bad = await saveKey(dir, 'AIzaBADBADBADBADBADBADBAD', async () => ({ ok: false, error: '이 키는 쓸 수 없습니다.' }));
+    assert.equal(bad.ok, false);
+    assert.match(await fsp.readFile(pathMod.join(dir, '.env'), 'utf8'), /OLDKEY_1234567890123456/);
+    const good = await saveKey(dir, '  AIzaGOODGOODGOODGOODGOOD9876  ', async () => ({ ok: true, warning: '크레딧' }));
+    assert.equal(good.ok, true);
+    assert.equal(good.hint, '…9876');
+    assert.equal(good.warning, '크레딧');
+    const env = await fsp.readFile(pathMod.join(dir, '.env'), 'utf8');
+    assert.equal(env, 'GEMINI_API_KEY=AIzaGOODGOODGOODGOODGOOD9876\nGEMINI_MODEL=gemini-3.5-flash\nMOCK_GEMINI=0\n');
+    assert.equal((await fsp.stat(pathMod.join(dir, '.env'))).mode & 0o777, 0o600);
+  } finally {
+    if (before === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = before;
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
 });

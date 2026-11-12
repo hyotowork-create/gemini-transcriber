@@ -8,7 +8,7 @@ const run = promisify(execFile);
 
 export async function hasBinary(name) {
   try {
-    await run('which', [name]);
+    await run(process.platform === 'win32' ? 'where' : 'which', [name]);
     return true;
   } catch {
     return false;

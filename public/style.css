@@ -15,7 +15,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 12px 20px 60px; display:flex;
 .drop { flex:1; display:flex; align-items:center; justify-content:center; min-height:84px; border:2px dashed #3a4050; border-radius:12px; cursor:pointer; color:var(--muted); padding:12px; text-align:center; transition: border-color .15s, background .15s; }
 .drop.over, .drop.has { border-color: var(--accent); color: var(--text); background: #1b2030; }
 .drop input { display:none; }
-input[type=url], input[type=text], input[type=number], select { width:100%; background:#0f1218; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:15px; }
+input[type=url], input[type=text], input[type=password], input[type=number], select { width:100%; background:#0f1218; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:15px; }
 .opts { margin: 4px 0 12px; color: var(--muted); }
 .opts summary { cursor:pointer; }
 .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:10px; color:var(--text); font-size:14px; }
@@ -85,3 +85,35 @@ button.danger:hover { background:#4a252c; }
 #drumGrid { display: block; width: 100%; height: 360px; }
 .banner { margin: 10px 0 0; padding: 10px 14px; background: #1b2436; border: 1px solid #2f3b58; border-radius: 10px; font-size: 14px; }
 .banner a { color: var(--accent2); font-weight: 600; }
+
+/* ---------- 휴대폰 화면 ---------- */
+button, .btn, .tab, .chk { white-space: nowrap; }
+.actions { flex-wrap: wrap; }
+.tabs { flex-wrap: wrap; }
+#sheet svg { max-width: 100%; height: auto; }
+@media (max-width: 640px) {
+  .top { padding: 20px 14px 4px; }
+  .top h1 { font-size: 22px; }
+  .sub { font-size: 14px; }
+  main { padding: 10px 12px 40px; }
+  .card { padding: 14px; }
+  .actions .chk { flex: 1 1 180px; flex-wrap: wrap; row-gap: 0; }
+  .actions .chk .muted { flex-basis: 100%; white-space: normal; padding-left: 26px; }
+  .tabtools { margin-left: 0; width: 100%; justify-content: flex-start; gap: 16px; padding-top: 4px; }
+  .mix input[type=range] { width: 110px; }
+  .dl .btn, .dl button { flex: 1 1 auto; text-align: center; }
+  #roll { height: 460px; }
+  #drumGrid { height: 300px; }
+  #sheetPane, #leadPane { padding: 4px; }
+}
+
+.settings { margin: 10px 0 0; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+.settings summary { cursor: pointer; font-size: 14px; }
+.settings-body { margin-top: 10px; }
+.settings-body .msg a { color: var(--accent2); }
+.keyrow { flex-wrap: wrap; margin: 8px 0 4px; }
+.keyrow input { flex: 1 1 220px; font-family: ui-monospace, Menlo, monospace; }
+.msg.ok { color: #7ed9a0; }
+.msg.warn { color: #ffd166; }
+.keyrow input { flex: 1 1 100%; min-height: 44px; }
+.keyrow .btn { min-height: 40px; }

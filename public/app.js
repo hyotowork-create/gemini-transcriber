@@ -9,10 +9,37 @@ const DRUM_LABEL = { kick: '킥', snare: '스네어', hihat: '하이햇', hihat_
 
 // ---------- 서버 상태 ----------
 let health = {};
-fetch('/api/health').then(r => r.json()).then(h => {
+function showKeyState(h) {
+  $('keyState').textContent = h.hasKey ? `· 저장됨 ${h.keyHint || ''}` : '· 키 없음';
+  $('keyState').classList.toggle('bad', !h.hasKey);
+  if (!h.hasKey && !h.mock) $('settings').open = true;
+}
+function loadHealth() { return fetch('/api/health').then(r => r.json()).then(renderHealth); }
+$('keyShow').addEventListener('click', () => { const i = $('keyInput'); i.type = i.type === 'password' ? 'text' : 'password'; $('keyShow').textContent = i.type === 'password' ? '보기' : '가리기'; });
+$('keySave').addEventListener('click', async () => {
+  const key = $('keyInput').value.trim();
+  const msg = $('keyMsg');
+  msg.className = 'msg';
+  if (!key) { msg.textContent = '새 키를 붙여 넣어 주세요.'; msg.classList.add('err'); return; }
+  $('keySave').disabled = true; msg.textContent = '키를 확인하는 중…';
+  try {
+    const r = await fetch('/api/settings/key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    $('keyInput').value = ''; $('keyInput').type = 'password'; $('keyShow').textContent = '보기';
+    msg.textContent = `저장했습니다 (${j.keyHint}). 바로 적용됩니다.` + (j.warning ? ' ' + j.warning : '');
+    msg.classList.add(j.warning ? 'warn' : 'ok');
+    await loadHealth();
+  } catch (e) {
+    msg.textContent = e.message; msg.classList.add('err');
+  } finally { $('keySave').disabled = false; }
+});
+loadHealth().catch(() => { $('health').textContent = '서버에 연결할 수 없습니다'; });
+function renderHealth(h) {
+  showKeyState(h);
   health = h;
   const parts = [];
-  parts.push(h.mock ? '<span class="bad">모의 모드(MOCK_GEMINI=1): Gemini를 호출하지 않습니다</span>' : (h.hasKey ? `모델 ${h.model}` : '<span class="bad">GEMINI_API_KEY가 없습니다. .env에 키를 넣고 서버를 다시 시작하세요.</span>'));
+  parts.push(h.mock ? '<span class="bad">모의 모드(MOCK_GEMINI=1): Gemini를 호출하지 않습니다</span>' : (h.hasKey ? `모델 ${h.model}` : '<span class="bad">Gemini API 키가 없습니다. 아래 설정에서 키를 넣어 주세요.</span>'));
   if (!h.ffmpeg) parts.push('<span class="bad">ffmpeg 없음</span>');
   if (!h.ytdlp) parts.push('<span class="bad">yt-dlp 없음 (유튜브 URL 사용 불가)</span>');
   parts.push(h.demucs ? '스템 분리 가능' : '<span class="muted">스템 분리 미설치 (README 3단계)</span>');
@@ -28,15 +55,18 @@ fetch('/api/health').then(r => r.json()).then(h => {
   }
   if (httpsUrl) $('lanHint').innerHTML = `휴대폰에서 같은 와이파이로 <a href="${httpsUrl}/${location.hash}">${phoneUrl.replace(/^https?:\/\//, '')}</a> 를 열면 공유 버튼이 카카오톡·메일 공유 창을 바로 띄웁니다. 자동으로 <b>https</b>로 넘어가고, 처음 한 번 "안전하지 않음" 경고에서 <b>계속(방문)</b>을 누르면 됩니다. http 주소에서는 공유 창이 열리지 않습니다.`;
   else if (h.lan && h.lan.length) $('lanHint').textContent = `휴대폰 공유 창은 https에서만 열립니다. 서버에 openssl이 없어 https를 켜지 못했습니다.`;
-}).catch(() => { $('health').textContent = '서버에 연결할 수 없습니다'; });
+}
 
 // ---------- 입력 ----------
 const drop = $('drop'), fileInput = $('file');
+const TOUCH = matchMedia('(pointer: coarse)').matches;
+const DROP_HINT = TOUCH ? '눌러서 음악 파일 선택 (파일 앱·음성 메모 등)' : '음악 파일을 끌어다 놓거나 클릭해서 선택';
+$('dropText').textContent = DROP_HINT;
 let chosenFile = null;
 function setFile(f) {
   chosenFile = f || null;
   drop.classList.toggle('has', !!f);
-  $('dropText').textContent = f ? `${f.name} (${(f.size / 1048576).toFixed(1)} MB)` : '음악 파일을 끌어다 놓거나 클릭해서 선택';
+  $('dropText').textContent = f ? `${f.name} (${(f.size / 1048576).toFixed(1)} MB)` : DROP_HINT;
   if (f) $('url').value = '';
 }
 fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
@@ -118,7 +148,7 @@ function showResult(id, j) {
   $('resultCard').classList.remove('hidden');
   $('rTitle').textContent = R.title;
   const partsTxt = R.partIds.map(p => `${PART_LABEL[p]} ${R.parts[p].length.toLocaleString()}음`).join(' · ');
-  $('rMeta').textContent = `${fmt(R.duration)} · ${R.key} · ${R.timeSignature} · 약 ${R.bpm} BPM · ${partsTxt} · 코드 ${R.chords.length}개${R.lyrics.length ? ` · 가사 ${R.lyrics.length}줄` : ''} · 처리 ${R.processingSec}초 · ${R.mock ? '모의 모드' : R.model}${R.stems ? ' · 스템 분리' : ''}`;
+  $('rMeta').textContent = `${fmt(R.duration)} · ${R.key} · ${R.timeSignature} · 약 ${R.bpm} BPM · ${partsTxt} · 코드 ${R.chords.length}개${R.lyrics.length ? ` · 가사 ${R.lyrics.length}줄` : ''} · 처리 ${R.processingSec}초 · ${R.mock ? '모의 모드' : R.model}${R.stems ? ' · 스템 분리' : ''}${R.keyFix?.applied ? ' · 조 보정됨(음원 기준)' : ''}`;
   if (R.description) {
     $('desc').classList.remove('hidden');
     $('descSummary').textContent = R.description.summary || '';
@@ -159,8 +189,8 @@ function rebuildTimeline() {
   timeline.sort((a, b) => a.startSec - b.startSec);
   if (!audio.paused) seekSched(audio.currentTime + 0.02);
 }
-$('easy').addEventListener('change', () => { updateDownloadLinks(); rebuildTimeline(); drawRoll(); if (activeTab === 'sheet') loadSheet(); });
-$('solfege').addEventListener('change', () => { updateDownloadLinks(); drawRoll(); if (activeTab === 'sheet') loadSheet(); });
+$('easy').addEventListener('change', () => { if (!R) return; updateDownloadLinks(); rebuildTimeline(); drawRoll(); if (activeTab === 'sheet') loadSheet(); });
+$('solfege').addEventListener('change', () => { if (!R) return; updateDownloadLinks(); drawRoll(); if (activeTab === 'sheet') loadSheet(); });
 
 // ---------- 재생: <audio>가 시계, 채보는 WebAudio 신디사이저 ----------
 let ctx = null, synthGain = null, noiseBuf = null;
@@ -289,7 +319,7 @@ function resizeRoll() {
 }
 window.addEventListener('resize', () => { resizeRoll(); drawRoll(); });
 $('zoom').addEventListener('input', e => { pxPerSec = +e.target.value; drawRoll(); });
-$('solfege').addEventListener('change', () => { resizeRoll(); if ($('solfege').checked) $('rollPane').scrollTop = (HIGH - 72) * 11; });
+$('solfege').addEventListener('change', () => { if (!R) return; resizeRoll(); if ($('solfege').checked) $('rollPane').scrollTop = (HIGH - 72) * 11; });
 canvas.addEventListener('click', e => { if (!R) return; const x = e.offsetX; if (x < KEYW) return; seekTo(viewStart + (x - KEYW) / pxPerSec); drawRoll(); });
 canvas.addEventListener('wheel', e => {
   if (!R) return;
@@ -426,12 +456,22 @@ async function loadSheet() {
     try {
       if (!window.opensheetmusicdisplay) throw new Error('악보 라이브러리(OSMD)를 불러오지 못했습니다. 인터넷 연결을 확인하세요.');
       let xml = sheetCache.get(variant);
-      if (!xml) { xml = await (await fetch(`/api/jobs/${jobId}/musicxml?easy=${variant[0]}&solfege=${variant[1]}`)).text(); sheetCache.set(variant, xml); }
+      if (!jobId) throw new Error('열린 결과가 없습니다');
+      if (!xml) {
+        const res = await fetch(`/api/jobs/${jobId}/musicxml?easy=${variant[0]}&solfege=${variant[1]}`);
+        if (!res.ok) throw new Error(`악보 파일을 받지 못했습니다 (${res.status})`);
+        xml = await res.text();
+        sheetCache.set(variant, xml);
+      }
       $('sheet').innerHTML = '';
-      osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay($('sheet'), { autoResize: false, backend: 'svg', drawTitle: true, drawComposer: false, drawPartNames: true, pageFormat: 'A4_P', pageBackgroundColor: '#FFFFFF' });
+      // 좁은 화면(휴대폰)에서는 쪽 나눔 없이 이어 그리고 음표를 줄인다. 손가락으로 확대해서 본다. PDF는 따로 A4로 그린다
+      const w = $('sheet').clientWidth || 900;
+      osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay($('sheet'), { autoResize: false, backend: 'svg', drawTitle: true, drawComposer: false, drawPartNames: true, pageFormat: w < 700 ? 'Endless' : 'A4_P', pageBackgroundColor: '#FFFFFF' });
       await osmd.load(xml);
+      osmd.zoom = w < 700 ? Math.max(0.5, w / 700) : 1;
       osmd.render();
       osmd._variant = variant;
+      osmd._xml = xml;
       $('sheetMsg').textContent = '';
     } catch (e) {
       $('sheetMsg').textContent = '악보 표시 실패: ' + e.message;
@@ -478,7 +518,15 @@ function renderLead() {
     c.strokeStyle = '#ccc'; c.beginPath(); c.moveTo(x, y + 40); c.lineTo(x + barW, y + 40); c.stroke();
     c.fillStyle = '#999'; c.font = '13px sans-serif'; c.fillText(String(b + 1), x + 4, y + 36);
     c.fillStyle = '#000'; c.font = 'bold 26px "Helvetica Neue", Arial, sans-serif';
-    for (const ch of chordsIn(b)) { const frac = (ch.beat - b * beatsPerBar) / beatsPerBar; c.fillText(ch.name, x + 10 + frac * (barW - 20), y + 30); }
+    let nextFree = x + 10;
+    const list = chordsIn(b);
+    if (list.length > 2) c.font = 'bold 21px "Helvetica Neue", Arial, sans-serif';
+    for (const ch of list) {
+      const frac = (ch.beat - b * beatsPerBar) / beatsPerBar;
+      const cx0 = Math.max(x + 10 + frac * (barW - 20), nextFree);
+      c.fillText(ch.name, cx0, y + 30);
+      nextFree = cx0 + c.measureText(ch.name).width + 10; // 같은 마디 코드끼리 겹치지 않게
+    }
     c.fillStyle = '#222'; c.font = '17px "Apple SD Gothic Neo", "Noto Sans KR", sans-serif';
     let ly = y + 68, line = '';
     const words = lyricsIn(b).map(l => l.text).join(' ');
@@ -510,10 +558,20 @@ async function makePdfBlob() {
   if (activeTab !== 'sheet') switchTab('sheet');
   await loadSheet();
   if (!osmd) throw new Error('악보가 준비되지 않았습니다');
-  const backends = osmd.Drawer.Backends;
-  const pdf = new jspdf.jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
-  for (let i = 0; i < backends.length; i++) { if (i > 0) pdf.addPage('a4', 'p'); await pdf.svg(backends[i].getSvgElement(), { x: 0, y: 0, width: 210, height: 297 }); }
-  return pdf.output('blob');
+  // PDF는 화면 폭과 상관없이 컴퓨터와 같은 A4 배치로 따로 그린다(휴대폰에서 만들어도 같은 악보)
+  const box = document.createElement('div');
+  box.style.cssText = 'position:absolute;left:-20000px;top:0;width:1000px;background:#fff';
+  document.body.appendChild(box);
+  try {
+    const print = new opensheetmusicdisplay.OpenSheetMusicDisplay(box, { autoResize: false, backend: 'svg', drawTitle: true, drawComposer: false, drawPartNames: true, pageFormat: 'A4_P', pageBackgroundColor: '#FFFFFF' });
+    await print.load(osmd._xml);
+    print.zoom = 1;
+    print.render();
+    const backends = print.Drawer.Backends;
+    const pdf = new jspdf.jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+    for (let i = 0; i < backends.length; i++) { if (i > 0) pdf.addPage('a4', 'p'); await pdf.svg(backends[i].getSvgElement(), { x: 0, y: 0, width: 210, height: 297 }); }
+    return pdf.output('blob');
+  } finally { box.remove(); }
 }
 $('dlPdf').addEventListener('click', async () => {
   if (!R) return;
@@ -562,4 +620,9 @@ $('copyLink').addEventListener('click', async () => {
 $('dlAll').addEventListener('click', async () => { for (const f of await collectShareFiles()) { saveBlob(f, f.name); await new Promise(r => setTimeout(r, 400)); } });
 
 // ---------- 주소의 #job=ID 로 기존 결과 다시 열기 ----------
-(function () { const m = location.hash.match(/job=([a-f0-9]+)/); if (m) { $('progressCard').classList.remove('hidden'); poll(m[1]); } })();
+function openJobFromHash() {
+  const m = location.hash.match(/job=([a-f0-9]+)/);
+  if (m && m[1] !== jobId) { stopPlayback(); $('resultCard').classList.add('hidden'); $('progressCard').classList.remove('hidden'); poll(m[1]); }
+}
+openJobFromHash();
+window.addEventListener('hashchange', openJobFromHash);

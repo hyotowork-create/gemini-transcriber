@@ -90,6 +90,17 @@ function mockChunk({ offsetSec, durationSec }, parts) {
 
 const RETRYABLE = /(429|500|503|RESOURCE_EXHAUSTED|UNAVAILABLE|overloaded|fetch failed|ECONNRESET)/i;
 
+/** 재시도해도 소용없는 오류를 사람이 읽을 한국어로 바꾼다. 해당 없으면 null */
+export function fatalGeminiError(msg) {
+  if (/prepayment credits are depleted|"code":\s*402|billing/i.test(msg))
+    return 'Gemini API 크레딧이 바닥났습니다. https://aistudio.google.com 의 프로젝트 결제(Billing)에서 충전하거나 다른 키로 바꾼 뒤 다시 시도하세요.';
+  if (/API key not valid|API_KEY_INVALID|"code":\s*(400|401|403).*key/i.test(msg))
+    return 'Gemini API 키가 올바르지 않습니다. .env의 GEMINI_API_KEY를 확인하고 서버를 다시 시작하세요.';
+  if (/is not found for API version|models\/[^ ]+ is not found|"code":\s*404/i.test(msg))
+    return '지정한 Gemini 모델을 찾을 수 없습니다. .env의 GEMINI_MODEL이나 옵션의 모델 이름을 확인하세요.';
+  return null;
+}
+
 export async function transcribeChunk(chunk, { apiKey, model, hint, mock, signal, parts = ['piano'], stemLabel = null, log = () => {} }) {
   if (mock) return mockChunk(chunk, parts);
   if (!apiKey) throw new Error('GEMINI_API_KEY가 설정되지 않았습니다 (.env 파일을 확인하세요)');
@@ -134,6 +145,8 @@ export async function transcribeChunk(chunk, { apiKey, model, hint, mock, signal
       lastErr = err;
       const msg = String(err?.message || err);
       if (signal?.aborted) throw new Error('cancelled');
+      const fatal = fatalGeminiError(msg);
+      if (fatal) throw new Error(fatal);
       if (attempt < 4 && RETRYABLE.test(msg)) {
         const wait = 2000 * attempt;
         log(`조각 ${chunk.index + 1}: ${msg.slice(0, 80)} → ${wait / 1000}초 후 재시도`);
@@ -175,4 +188,22 @@ export async function describeSong(info, { apiKey, model, mock, signal }) {
     config: { responseMimeType: 'application/json', responseSchema: schema, temperature: 0.4, abortSignal: signal },
   });
   try { return JSON.parse(res.text); } catch { return { summary: res.text?.slice(0, 500) || '', structure: '', difficulty: '', tips: '' }; }
+}
+
+/** 새 API 키가 진짜인지 아주 짧은 호출로 확인한다. 크레딧이 바닥난 키는 저장은 하되 경고한다 */
+export async function validateKey(key, { model = 'gemini-3.5-flash-lite' } = {}) {
+  try {
+    const ai = new GoogleGenAI({ apiKey: key });
+    await ai.models.generateContent({ model, contents: 'ok', config: { maxOutputTokens: 4, temperature: 0 } });
+    return { ok: true };
+  } catch (err) {
+    const msg = String(err?.message || err);
+    if (/prepayment credits are depleted|"code":\s*402|billing/i.test(msg))
+      return { ok: true, warning: '키는 맞지만 이 키의 크레딧이 바닥났습니다. AI Studio 결제(Billing)에서 충전해야 채보가 됩니다.' };
+    if (/API key not valid|API_KEY_INVALID|PERMISSION_DENIED|"code":\s*(400|401|403)/i.test(msg))
+      return { ok: false, error: '이 키는 쓸 수 없습니다. AI Studio에서 키를 다시 복사해 주세요.' };
+    if (/"code":\s*429|RESOURCE_EXHAUSTED/i.test(msg))
+      return { ok: true, warning: '키는 맞지만 지금 사용 한도에 걸렸습니다. 잠시 뒤에는 될 수 있습니다.' };
+    return { ok: false, error: '키를 확인하지 못했습니다(인터넷 연결 확인). ' + msg.slice(0, 80) };
+  }
 }

@@ -12,6 +12,19 @@
   <h1>Gemini 채보</h1>
   <p class="sub">유튜브 URL이나 음악 파일을 넣고 <b>채보 시작</b>을 누르면 Gemini가 피아노·베이스·기타·드럼 악보와 코드·가사를 뽑습니다. 악보는 MIDI·MusicXML·PDF로 받고, 휴대폰에서는 카톡·메일로 바로 보냅니다.</p>
   <p id="health" class="health"></p>
+  <details id="settings" class="settings">
+    <summary>⚙ 설정 · Gemini API 키 <span id="keyState" class="muted"></span></summary>
+    <div class="settings-body">
+      <p class="msg">키는 이 앱을 켠 컴퓨터에 저장되고 바로 적용됩니다. 화면에는 끝 4자리만 보입니다.
+        키가 없으면 <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>에서 만드세요(구글 로그인 → Create API key).</p>
+      <div class="row keyrow">
+        <input type="password" id="keyInput" placeholder="AIza로 시작하는 새 키 붙여 넣기" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <button id="keyShow" type="button" class="btn">보기</button>
+        <button id="keySave" type="button" class="btn accent">저장</button>
+      </div>
+      <p id="keyMsg" class="msg"></p>
+    </div>
+  </details>
   <p id="httpsBanner" class="banner hidden"></p>
 </header>
 
